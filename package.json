@@ -1,0 +1,56 @@
+{
+  "name": "vscode-milkdrop",
+  "displayName": "Milkdrop Preset Language Support",
+  "description": "Syntax highlighting, renumbering, and diagnostics for .milk preset files.",
+  "version": "0.1.0",
+  "publisher": "matthew-bellew",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Programming Languages", "Linters"],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "milkdrop",
+        "aliases": ["Milkdrop Preset", "milkdrop"],
+        "extensions": [".milk"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "milkdrop",
+        "scopeName": "source.milkdrop",
+        "path": "./syntaxes/milkdrop.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.block.hlsl.milkdrop": "hlsl"
+        }
+      }
+    ],
+    "commands": [
+      {
+        "command": "milkdrop.renumberBlocks",
+        "title": "Milkdrop: Renumber Indexed Blocks"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "milkdrop.renumberBlocks",
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r",
+        "when": "editorTextFocus && editorLangId == milkdrop"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p ."
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  }
+}
