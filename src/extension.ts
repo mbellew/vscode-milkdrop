@@ -1,33 +1,53 @@
 import * as vscode from 'vscode';
+import { initHlsl, isHlslReady, getShaderDiagnostics } from './hlsl';
 
-// Keys that use the `prefix_NN=` numbering convention and benefit from renumber/dedup.
-const INDEXED_PREFIXES = ['comp', 'warp', 'per_frame', 'per_pixel', 'per_frame_init'];
-const INDEXED_LINE_RE = new RegExp(
-    `^(${INDEXED_PREFIXES.join('|')})_(\\d+)(=.*)$`
-);
+// Two on-disk shapes for indexed code keys (see CLAUDE.md §4).
+//
+// Pattern A — underscore between suffix and index:
+//   per_frame_1=, per_frame_init_1=, per_pixel_1=, warp_1=`..., comp_1=`...
+// Case-insensitive: MilkDrop lowercases keys at load time, so `Comp_1=` and
+// `COMP_1=` are valid. The capture group preserves the file's original casing,
+// which we echo back when renumbering (don't autocorrect casing).
+const PATTERN_A_RE = /^(per_frame_init|per_frame|per_pixel|warp|comp)_(\d+)(=.*)$/i;
 
-// Shader-body prefixes append a backtick after `=` to start the embedded HLSL.
+// Pattern B — custom wave/shape code, NO underscore between suffix and inner index:
+//   wave_0_per_frame1=, wave_0_per_point1=, shape_2_per_frame_init1=, ...
+// The outer N (wave/shape index, typically 0..3) is part of the grouping prefix
+// so wave_0_per_point and wave_1_per_point renumber independently.
+const PATTERN_B_RE = /^((?:wave|shape)_\d+_(?:per_frame_init|per_frame|per_point))(\d+)(=.*)$/i;
+
+// Pattern A prefixes whose values begin with a backtick to start an embedded shader.
 const SHADER_PREFIXES = new Set(['comp', 'warp']);
+
+// Pattern A prefixes always offered as starting points in line-start completion.
+const PATTERN_A_PREFIXES = ['per_frame_init', 'per_frame', 'per_pixel', 'warp', 'comp'];
 
 interface IndexedLine {
     lineNumber: number;
-    prefix: string;
-    index: number;
-    rest: string; // includes leading '='
+    prefix: string;    // grouping key, e.g. 'per_frame' or 'wave_0_per_point'
+    separator: string; // '_' for Pattern A, '' for Pattern B
+    index: number;     // trailing numeric index ordering lines within a block
+    rest: string;      // includes leading '='
+}
+
+function matchIndexedLine(text: string): Omit<IndexedLine, 'lineNumber'> | null {
+    const a = text.match(PATTERN_A_RE);
+    if (a) {
+        return { prefix: a[1], separator: '_', index: parseInt(a[2], 10), rest: a[3] };
+    }
+    const b = text.match(PATTERN_B_RE);
+    if (b) {
+        return { prefix: b[1], separator: '', index: parseInt(b[2], 10), rest: b[3] };
+    }
+    return null;
 }
 
 function scanIndexedLines(doc: vscode.TextDocument): IndexedLine[] {
     const out: IndexedLine[] = [];
     for (let i = 0; i < doc.lineCount; i++) {
-        const text = doc.lineAt(i).text;
-        const m = text.match(INDEXED_LINE_RE);
-        if (m) {
-            out.push({
-                lineNumber: i,
-                prefix: m[1],
-                index: parseInt(m[2], 10),
-                rest: m[3]
-            });
+        const parsed = matchIndexedLine(doc.lineAt(i).text);
+        if (parsed) {
+            out.push({ lineNumber: i, ...parsed });
         }
     }
     return out;
@@ -53,7 +73,7 @@ async function renumberBlocks(editor: vscode.TextEditor): Promise<void> {
                 continue; // already correct, skip the edit
             }
             const lineText = doc.lineAt(l.lineNumber).text;
-            const newText = `${l.prefix}_${next}${l.rest}`;
+            const newText = `${l.prefix}${l.separator}${next}${l.rest}`;
             const range = new vscode.Range(
                 l.lineNumber, 0,
                 l.lineNumber, lineText.length
@@ -68,7 +88,85 @@ async function renumberBlocks(editor: vscode.TextEditor): Promise<void> {
     vscode.window.showInformationMessage(`Milkdrop: renumbered (${summary}).`);
 }
 
-// Diagnostics: flag duplicate `<prefix>_<n>=` keys (last-wins overwrite bug).
+// The grouping key for a block: prefix + separator, lowercased (keys are
+// case-insensitive at load time), e.g. 'comp_', 'per_frame_', 'wave_0_per_point'.
+function groupKey(l: IndexedLine): string {
+    return `${l.prefix}${l.separator}`.toLowerCase();
+}
+
+// Flag duplicate `<prefix>_<n>=` keys. projectM keeps the FIRST occurrence; the
+// later line is silently dropped at load time.
+function duplicateDiagnostics(doc: vscode.TextDocument, indexed: IndexedLine[]): vscode.Diagnostic[] {
+    const seen = new Map<string, IndexedLine>();
+    const diags: vscode.Diagnostic[] = [];
+    for (const l of indexed) {
+        const key = `${l.prefix}${l.separator}${l.index}`.toLowerCase();
+        const first = seen.get(key);
+        if (!first) {
+            seen.set(key, l);
+            continue;
+        }
+        const range = new vscode.Range(
+            l.lineNumber, 0,
+            l.lineNumber, doc.lineAt(l.lineNumber).text.length
+        );
+        const d = new vscode.Diagnostic(
+            range,
+            `Duplicate key '${l.prefix}${l.separator}${l.index}=' (first occurrence on line ${first.lineNumber + 1}). projectM keeps the first occurrence; this line is dropped at load time.`,
+            vscode.DiagnosticSeverity.Warning
+        );
+        d.code = 'milkdrop.duplicate-index';
+        diags.push(d);
+    }
+    return diags;
+}
+
+// Flag gap-truncated blocks. projectM's GetCode() loads `<prefix>_1`, `_2`, …
+// and STOPS at the first missing index, so any higher-indexed lines that exist
+// (often the tail orphaned by a duplicate) are silently dropped at load time.
+function gapDiagnostics(doc: vscode.TextDocument, indexed: IndexedLine[]): vscode.Diagnostic[] {
+    const groups = new Map<string, IndexedLine[]>();
+    for (const l of indexed) {
+        const k = groupKey(l);
+        const g = groups.get(k);
+        if (g) {
+            g.push(l);
+        } else {
+            groups.set(k, [l]);
+        }
+    }
+
+    const diags: vscode.Diagnostic[] = [];
+    for (const lines of groups.values()) {
+        const present = new Set(lines.map((l) => l.index));
+        // Contiguous run loaded from index 1.
+        let run = 0;
+        while (present.has(run + 1)) {
+            run++;
+        }
+        const gapIndex = run + 1; // first missing index
+
+        for (const l of lines) {
+            if (l.index <= run) {
+                continue; // this line loads fine
+            }
+            const label = `${l.prefix}${l.separator}${l.index}=`;
+            const message = run === 0
+                ? `'${l.prefix}${l.separator}1=' is missing, so this entire ${l.prefix} block fails to load (projectM starts at index 1).`
+                : `'${label}' is dropped at load time: projectM stops at the first missing index ('${l.prefix}${l.separator}${gapIndex}=' is absent). Renumber to close the gap.`;
+            const range = new vscode.Range(
+                l.lineNumber, 0,
+                l.lineNumber, doc.lineAt(l.lineNumber).text.length
+            );
+            const d = new vscode.Diagnostic(range, message, vscode.DiagnosticSeverity.Warning);
+            d.code = 'milkdrop.gap-truncation';
+            diags.push(d);
+        }
+    }
+    return diags;
+}
+
+// Diagnostics: duplicate keys, gap-truncation, and (async) shader syntax.
 function refreshDiagnostics(
     doc: vscode.TextDocument,
     collection: vscode.DiagnosticCollection
@@ -76,34 +174,21 @@ function refreshDiagnostics(
     if (doc.languageId !== 'milkdrop') {
         return;
     }
-    const seen = new Map<string, IndexedLine>();
-    const dups: { first: IndexedLine; second: IndexedLine }[] = [];
-
-    for (const l of scanIndexedLines(doc)) {
-        const key = `${l.prefix}_${l.index}`;
-        const prev = seen.get(key);
-        if (prev) {
-            dups.push({ first: prev, second: l });
-        } else {
-            seen.set(key, l);
-        }
-    }
-
+    const indexed = scanIndexedLines(doc);
     const diags: vscode.Diagnostic[] = [];
-    for (const { first, second } of dups) {
-        const key = `${second.prefix}_${second.index}`;
-        const range = new vscode.Range(
-            second.lineNumber, 0,
-            second.lineNumber, doc.lineAt(second.lineNumber).text.length
-        );
-        const d = new vscode.Diagnostic(
-            range,
-            `Duplicate key '${key}=' (also at line ${first.lineNumber + 1}). The earlier line will be overwritten by this one.`,
-            vscode.DiagnosticSeverity.Warning
-        );
-        d.code = 'milkdrop.duplicate-index';
-        diags.push(d);
+
+    diags.push(...duplicateDiagnostics(doc, indexed));
+    diags.push(...gapDiagnostics(doc, indexed));
+
+    // HLSL syntax errors in the warp/comp shader blocks. No-op until the WASM
+    // parser has finished loading; activate() re-runs diagnostics once it is.
+    const shadersEnabled = vscode.workspace
+        .getConfiguration('milkdrop')
+        .get<boolean>('shaderDiagnostics.enable', true);
+    if (shadersEnabled && isHlslReady()) {
+        diags.push(...getShaderDiagnostics(doc));
     }
+
     collection.set(doc.uri, diags);
 }
 
@@ -118,25 +203,65 @@ function provideIndexedCompletions(
         return [];
     }
 
-    // Find highest existing index per prefix so we can suggest the next one.
-    const highest = new Map<string, number>();
+    // Highest existing index per (prefix, separator) pair so we can suggest the next one.
+    // We key by `${prefix}:${separator}` since the same prefix can never appear with both
+    // separators -- but the explicit key makes the dedup intent obvious.
+    interface Slot { prefix: string; separator: string; index: number; }
+    const highest = new Map<string, Slot>();
     for (const l of scanIndexedLines(doc)) {
-        const cur = highest.get(l.prefix) ?? 0;
-        if (l.index > cur) {
-            highest.set(l.prefix, l.index);
+        const key = `${l.prefix}:${l.separator}`;
+        const cur = highest.get(key);
+        if (!cur || l.index > cur.index) {
+            highest.set(key, { prefix: l.prefix, separator: l.separator, index: l.index });
         }
     }
 
+    // Always offer the standard Pattern A starting points, even when absent.
+    // Pattern B prefixes are only offered when the doc already has at least one such line,
+    // so a fresh preset isn't flooded with 24 wave/shape variants the user may not need.
+    for (const prefix of PATTERN_A_PREFIXES) {
+        const key = `${prefix}:_`;
+        if (!highest.has(key)) {
+            highest.set(key, { prefix, separator: '_', index: 0 });
+        }
+    }
+
+    // If the nearest non-blank line above is itself an indexed line, prefer its prefix
+    // and use *its* index + 1 (the literal continuation) rather than the block max.
+    // This is what the user expects after pressing Enter inside a block.
+    let preferred: Slot | null = null;
+    for (let i = position.line - 1; i >= 0; i--) {
+        const text = doc.lineAt(i).text;
+        if (text.trim() === '') {
+            continue;
+        }
+        const parsed = matchIndexedLine(text);
+        if (parsed) {
+            preferred = { prefix: parsed.prefix, separator: parsed.separator, index: parsed.index };
+            // Pin the completion for this prefix to previous-index + 1, even if a higher
+            // index exists later in the file (user is inserting between existing lines).
+            highest.set(`${preferred.prefix}:${preferred.separator}`, preferred);
+        }
+        break;
+    }
+
     const items: vscode.CompletionItem[] = [];
-    for (const prefix of INDEXED_PREFIXES) {
-        const next = (highest.get(prefix) ?? 0) + 1;
-        const isShader = SHADER_PREFIXES.has(prefix);
-        const insertText = isShader ? `${prefix}_${next}=\`` : `${prefix}_${next}=`;
+    for (const { prefix, separator, index } of highest.values()) {
+        const next = index + 1;
+        const isShader = separator === '_' && SHADER_PREFIXES.has(prefix);
+        const insertText = isShader
+            ? `${prefix}${separator}${next}=\``
+            : `${prefix}${separator}${next}=`;
+        const isPreferred = preferred !== null
+            && preferred.prefix === prefix
+            && preferred.separator === separator;
         const item = new vscode.CompletionItem(insertText, vscode.CompletionItemKind.Snippet);
         item.insertText = insertText;
         item.detail = isShader ? 'shader body line' : 'indexed expression';
         item.filterText = prefix;
-        item.sortText = `0_${prefix}`; // float to the top over generic word completions
+        // Preferred entry sorts above the others (which sort above generic word completions).
+        item.sortText = isPreferred ? `00_${prefix}` : `0_${prefix}`;
+        item.preselect = isPreferred;
         // Replace whatever the user has typed at the start of the line.
         item.range = new vscode.Range(position.line, 0, position.line, position.character);
         items.push(item);
@@ -167,14 +292,25 @@ export function activate(context: vscode.ExtensionContext): void {
     );
 
     // Run diagnostics on open/change/save and for already-open editors.
-    if (vscode.window.activeTextEditor) {
-        refreshDiagnostics(vscode.window.activeTextEditor.document, collection);
-    }
+    const refreshAllOpen = (): void => {
+        for (const doc of vscode.workspace.textDocuments) {
+            refreshDiagnostics(doc, collection);
+        }
+    };
+    refreshAllOpen();
     context.subscriptions.push(
         vscode.workspace.onDidOpenTextDocument((d) => refreshDiagnostics(d, collection)),
         vscode.workspace.onDidChangeTextDocument((e) => refreshDiagnostics(e.document, collection)),
         vscode.workspace.onDidCloseTextDocument((d) => collection.delete(d.uri))
     );
+
+    // Load the HLSL parser in the background; once ready, re-run diagnostics so
+    // shader errors appear for files opened before init finished.
+    initHlsl(context.extensionPath).then((ok) => {
+        if (ok) {
+            refreshAllOpen();
+        }
+    });
 }
 
 export function deactivate(): void {}

@@ -1,0 +1,21 @@
+# Source & build config (the compiled output in out/ is what ships)
+src/**
+**/*.ts
+**/*.map
+tsconfig.json
+.gitignore
+.vscode/**
+
+# Sample/working presets — not part of the extension
+*.milk
+
+# Dev-only docs
+CLAUDE.md
+TODO.md
+
+# web-tree-sitter ships a debug build alongside the release one; we only load
+# the release variant, so drop the debug wasm/js (~1 MB).
+node_modules/web-tree-sitter/debug/**
+
+# NOTE: do not ignore wasm/ (bundled grammar) or node_modules/web-tree-sitter
+# (runtime parser + core wasm) — both are required at runtime.

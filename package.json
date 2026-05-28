@@ -4,18 +4,27 @@
   "description": "Syntax highlighting, renumbering, and diagnostics for .milk preset files.",
   "version": "0.1.0",
   "publisher": "matthew-bellew",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Programming Languages", "Linters"],
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
   "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
     "languages": [
       {
         "id": "milkdrop",
-        "aliases": ["Milkdrop Preset", "milkdrop"],
-        "extensions": [".milk"],
+        "aliases": [
+          "Milkdrop Preset",
+          "milkdrop"
+        ],
+        "extensions": [
+          ".milk"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -42,15 +51,32 @@
         "mac": "cmd+alt+r",
         "when": "editorTextFocus && editorLangId == milkdrop"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Milkdrop",
+      "properties": {
+        "milkdrop.shaderDiagnostics.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Report HLSL syntax errors (missing ';' / '}', stray tokens) in warp_ and comp_ shader blocks, using the tree-sitter-hlsl parser."
+        }
+      }
+    }
   },
   "scripts": {
     "compile": "tsc -p .",
-    "watch": "tsc -watch -p ."
+    "watch": "tsc -watch -p .",
+    "build:wasm": "tree-sitter build --wasm node_modules/tree-sitter-hlsl -o wasm/tree-sitter-hlsl.wasm"
   },
   "devDependencies": {
+    "@types/emscripten": "^1.41.5",
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
+    "tree-sitter-cli": "^0.26.9",
+    "tree-sitter-hlsl": "^0.2.0",
     "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "web-tree-sitter": "^0.26.9"
   }
 }

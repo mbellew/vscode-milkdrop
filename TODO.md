@@ -13,11 +13,20 @@
 
 ## v0.3 — embedded HLSL
 
-- [ ] Inject real HLSL highlighting inside `comp_N=\`` / `warp_N=\`` backtick blocks. Options:
+- [x] HLSL **syntax-error** diagnostics in `warp_N`/`comp_N` blocks via the
+      `tree-sitter-hlsl` grammar compiled to WASM (`wasm/tree-sitter-hlsl.wasm`),
+      loaded at runtime with `web-tree-sitter`. See [src/hlsl.ts](src/hlsl.ts).
+      Reassembles the block (strip backtick, stop at gap), rewrites the
+      `shader_body { … }` wrapper into a real function, blanks legacy
+      `= sampler_state { … }` initializers (grammar gap → false positives),
+      parses, and reports the *first* error node per block (recovery cascade is
+      noisy). Toggle: `milkdrop.shaderDiagnostics.enable`.
+- [ ] Inject real HLSL **highlighting** inside `comp_N=\`` / `warp_N=\`` blocks
+      (the diagnostics above don't colorize). Options:
   - rely on user having an HLSL extension installed (cheap, fragile)
-  - ship a minimal HLSL grammar in this extension
+  - ship a minimal HLSL TextMate grammar in this extension
 - [ ] Make `lerp`, `tex2D`, `tex3D`, `GetVideo`, `GetBlur1/2/3`, `sampler_main`, `sampler_fw_video`, `aspect`, `texsize`, etc. completable inside shader blocks.
-- [ ] Variable shadowing diagnostic across the *concatenated* comp/warp block (catch the `c, s` collision we hit in `999.milk`).
+- [ ] Variable shadowing diagnostic across the *concatenated* comp/warp block (catch the `c, s` collision we hit in `999.milk`). Needs name resolution — tree-sitter gives the parse tree to build this on, but not the analysis itself.
 
 ## v0.4 — live preview
 
