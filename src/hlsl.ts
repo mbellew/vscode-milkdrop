@@ -109,14 +109,63 @@ function blankPreservingNewlines(s: string): string {
     return s.replace(/[^\n]/g, ' ');
 }
 
+// Discard everything after the brace that closes `shader_body`, mirroring
+// projectM's MilkdropShader::PreprocessPresetShader (which resizes the program
+// at the matching close brace). Real presets routinely leave trailing notes
+// ("written by martin", "END", stray code) after the final `}`; the parser
+// would otherwise treat that tail as part of the source and emit a spurious
+// whole-block error. We blank the tail rather than slice it so the row/column
+// mapping built in reassemble() stays valid. Brace matching skips `//` and
+// `/* */` comments, matching projectM's scanner.
+function truncateAfterBody(source: string): string {
+    const m = /\bshader_body\b/.exec(source);
+    if (!m) {
+        return source;
+    }
+    let i = source.indexOf('{', m.index);
+    if (i < 0) {
+        return source;
+    }
+    let depth = 1;
+    for (i++; i < source.length && depth > 0; i++) {
+        const c = source[i];
+        if (c === '/' && source[i + 1] === '/') {
+            while (i < source.length && source[i] !== '\n') {
+                i++;
+            }
+            continue; // for-loop's i++ steps past the newline
+        }
+        if (c === '/' && source[i + 1] === '*') {
+            i += 2;
+            while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) {
+                i++;
+            }
+            i++; // land on the '/'; for-loop's i++ steps past it
+            continue;
+        }
+        if (c === '{') {
+            depth++;
+        } else if (c === '}') {
+            depth--;
+        }
+    }
+    if (depth !== 0) {
+        return source; // unbalanced — let the parser report the real error
+    }
+    // i now sits just past the matching '}'.
+    return source.slice(0, i) + blankPreservingNewlines(source.slice(i));
+}
+
 // Make the assembled body parseable by the C-based HLSL grammar without
 // shifting any row (column drift is confined to the `shader_body` line, which
 // carries no other tokens in practice):
+//   - trailing text after the body's closing `}`  ->  blanked (projectM drops it).
 //   - `shader_body { … }`  ->  a real function definition.
 //   - `= sampler_state { … }`  ->  blanked out (legacy D3D9 effect-framework
 //     syntax the grammar doesn't model; would otherwise yield false positives).
 function normalize(source: string): string {
-    let s = source.replace(/\bshader_body\b/, 'float4 shader_body() : COLOR');
+    let s = truncateAfterBody(source);
+    s = s.replace(/\bshader_body\b/, 'float4 shader_body() : COLOR');
     s = s.replace(/=\s*sampler_state\s*\{[^}]*\}/gi, blankPreservingNewlines);
     return s;
 }

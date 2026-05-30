@@ -496,10 +496,11 @@ Resolved:
 1. ~~**Duplicate-key behavior**~~ — fixed. The diagnostic now reports first-wins ("projectM keeps the first occurrence; this line is dropped at load time"), via `duplicateDiagnostics` in [src/extension.ts](src/extension.ts).
 2. ~~**Pattern B prefixes missing**~~ — fixed. `PATTERN_B_RE` covers `wave_<N>_per_frame|per_point` and `shape_<N>_per_frame|per_frame_init`; both patterns are case-insensitive (keys are case-insensitive at load time, casing preserved on output).
 3. ~~**Gap-truncation diagnostic**~~ — done. `gapDiagnostics` flags every line past the first missing index ("dropped at load time… renumber to close the gap"), for all prefixes. The shader validator ([src/hlsl.ts](src/hlsl.ts)) skips a gap-truncated block so it doesn't emit a misleading whole-block parse error — the gap diagnostic owns that case.
+4. ~~**Trailing text after the body**~~ — done. `truncateAfterBody` in [src/hlsl.ts](src/hlsl.ts) blanks everything after the brace that closes `shader_body`, mirroring projectM's `MilkdropShader::PreprocessPresetShader` (which resizes the program there). Presets often leave notes ("written by martin", "END") after the final `}`; feeding that tail to tree-sitter caused a spurious whole-block error. Blanking (vs. slicing) preserves the row mapping. Cut corpus false positives from 44→23 blocks (0.5%→0.28% of shader presets). The remaining ~23 are grammar-coverage gaps — HLSL reserved words used as MilkDrop variable names (`sample`, `or`, …) and a few odd constructs (comma operator). **The prelude (`MilkdropStaticShaders`'s `kPresetShaderHeaderGlsl330`) does NOT help these**: tree-sitter does syntax only, so undeclared uniforms/samplers already aren't flagged — there's nothing to declare away, and prepending the header would only shift rows and risk new false positives.
 
 Outstanding:
 
-4. **First-line key-only parsing**: the parser also accepts `key value` (space delimiter). Real presets rarely do this, but the grammar's `kv-line` regex insists on `=`. Low priority — flag if seen.
+5. **First-line key-only parsing**: the parser also accepts `key value` (space delimiter). Real presets rarely do this, but the grammar's `kv-line` regex insists on `=`. Low priority — flag if seen.
 
 ### Conventions the extension should preserve
 
