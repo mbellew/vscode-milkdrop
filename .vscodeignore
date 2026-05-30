@@ -9,9 +9,14 @@ tsconfig.json
 # Sample/working presets — not part of the extension
 *.milk
 
-# Dev-only docs
+# Dev-only docs & tooling
 CLAUDE.md
 TODO.md
+justfile
+.claude/**
+
+# Previously-built package artifacts
+*.vsix
 
 # web-tree-sitter ships a debug build alongside the release one; we only load
 # the release variant, so drop the debug wasm/js (~1 MB).

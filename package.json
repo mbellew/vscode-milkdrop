@@ -42,6 +42,11 @@
         }
       }
     ],
+    "chatInstructions": [
+      {
+        "path": "./instructions/milkdrop.instructions.md"
+      }
+    ],
     "commands": [
       {
         "command": "milkdrop.renumberBlocks",
@@ -68,6 +73,16 @@
           "type": "boolean",
           "default": true,
           "description": "Report syntax errors in the per_frame/per_pixel/wave/shape expression code (unbalanced parens, stray tokens, unknown function calls, wrong argument counts), matching projectM's projectm-eval compiler."
+        },
+        "milkdrop.semanticHighlighting.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Colour built-in variables and functions (time, bass, q1..q32, sin, …) distinctly in expression code via semantic tokens, so a misspelled built-in — which silently auto-declares to 0 — stands out by losing the highlight. Requires editor.semanticHighlighting to be enabled by the active theme."
+        },
+        "milkdrop.undefinedReadDiagnostics.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Warn when a non-built-in variable is read in the per-frame or per-pixel code but never assigned anywhere in that pool, so it can only evaluate to 0 — usually a typo or a variable mistakenly expected to carry across pools (only q1..q32 do)."
         }
       }
     }

@@ -52,7 +52,7 @@ type TokType =
     | '(' | ')' | '[' | ']' | '?' | ':' | ',' | ';'
     | 'bad' | 'eof';
 
-interface Token {
+export interface Token {
     type: TokType;
     value: string;
     line: number;   // 0-based row within the assembled block source
@@ -69,7 +69,7 @@ const NAME_RE = /[_a-zA-Z][_a-zA-Z0-9]*/y;
 // `$` constants: hex, char literal, or one of the named constants (phi before pi).
 const DOLLAR_RE = /\$(?:[xX][0-9a-fA-F]+|'.'|[pP][hH][iI]|[pP][iI]|[eE])/y;
 
-function tokenize(src: string): Token[] {
+export function tokenize(src: string): Token[] {
     const toks: Token[] = [];
     let i = 0;
     let line = 0;
@@ -396,7 +396,7 @@ export interface IndexedCodeLine {
 // Prefixes whose values are HLSL, not expression code — validated elsewhere.
 const SHADER_PREFIXES = new Set(['comp', 'warp']);
 
-interface Assembled {
+export interface Assembled {
     source: string;
     rows: { docLine: number; colOffset: number }[];
     truncated: boolean;
@@ -405,7 +405,7 @@ interface Assembled {
 // Reassemble one block exactly like projectM's GetCode(): first-occurrence wins
 // per index, gather 1..N, stop at the first gap, strip one optional leading
 // backtick. Tracks each row back to its document line/column for diagnostics.
-function reassembleGroup(lines: IndexedCodeLine[]): Assembled {
+export function reassembleGroup(lines: IndexedCodeLine[]): Assembled {
     const byIndex = new Map<number, IndexedCodeLine>();
     for (const l of lines) {
         if (!byIndex.has(l.index)) {

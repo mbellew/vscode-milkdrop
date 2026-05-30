@@ -4,3 +4,6 @@ out/
 .vscode-test/
 .DS_Store
 /*.milk
+
+# Claude Code local settings (machine-specific permissions, etc.)
+.claude/

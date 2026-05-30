@@ -75,6 +75,58 @@ SOFTWARE.
 
 ---
 
+## projectM and projectm-eval (reference implementations)
+
+This extension does **not** bundle or copy any source code from projectM or its
+`projectm-eval` expression compiler. However, parts of the extension are
+*independent reimplementations* written by studying those projects' source and
+documented behavior:
+
+- [src/expr.ts](src/expr.ts) mirrors `projectm-eval`'s expression grammar and
+  scanner (`Compiler.y` / `Scanner.l`) — the operator precedence ladder, the
+  intrinsic-function table, and per-function argument arities — to validate
+  `.milk` expression code the same way the real compiler would.
+- [src/extension.ts](src/extension.ts) and [src/expr.ts](src/expr.ts) reproduce
+  the behavior of projectM's `PresetFileParser.cpp` (`GetCode` block reassembly,
+  first-occurrence-wins for duplicate keys, gap truncation).
+- [src/identifiers.ts](src/identifiers.ts) lists the built-in variable *names*
+  registered by projectM's `MilkdropPreset/*Context.cpp` files.
+
+These are facts about a file format and observable program behavior (names and
+APIs), reimplemented from scratch in TypeScript; no upstream code is included.
+Attribution is given here as a courtesy and to credit the source of the design.
+
+- projectM: https://github.com/projectM-visualizer/projectm — License: LGPL-2.1
+  (GNU Lesser General Public License, version 2.1). Full text:
+  https://github.com/projectM-visualizer/projectm/blob/master/LICENSE.txt
+- projectm-eval: https://github.com/projectM-visualizer/projectm-eval — License: MIT
+
+```
+The MIT License (MIT)
+
+Copyright © 2023 The projectM Team
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+---
+
 ## Build toolchain note
 
 `wasm/tree-sitter-hlsl.wasm` is compiled from the `tree-sitter-hlsl` C sources
