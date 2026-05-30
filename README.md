@@ -48,7 +48,10 @@ local installs.
 
 ## Installing
 
-Install the packaged `.vsix` into VS Code in either way:
+Download the latest `vscode-milkdrop-<version>.vsix` from the
+[**Releases** page](https://github.com/mbellew/vscode-milkdrop/releases/latest)
+(or build your own with [Packaging](#packaging) above), then install it into VS
+Code in either way:
 
 - **CLI:** `code --install-extension vscode-milkdrop-<version>.vsix`
 - **UI:** Extensions view → `…` menu → *Install from VSIX…* → pick the file.
