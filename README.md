@@ -4,12 +4,27 @@ VS Code language support for Milkdrop `.milk` preset files.
 
 ## Features
 
-- **Syntax highlighting** for sections, indexed keys (`comp_N=`, `warp_N=`, `per_frame_N=`, `per_pixel_N=`), HLSL inside shader backtick blocks, expression keywords, and numerics.
-- **Renumber command** (`Milkdrop: Renumber Indexed Blocks`, default `cmd+alt+r` / `ctrl+alt+r`) — rewrites every `<prefix>_N=` line so each prefix is numbered 1..N in source order. Fixes the common bug where duplicate keys silently overwrite each other.
-- **Duplicate-key diagnostic** — warns live as you type when two lines share the same `<prefix>_N=` key (projectM keeps the first; the later line is dropped at load time).
-- **Gap-truncation diagnostic** — warns when a block has a missing index (e.g. a duplicate leaves `comp_5` absent): projectM stops at the first gap, so every higher-numbered line is silently dropped at load time. Run the renumber command to close the gap.
-- **Smart line-start completions** — typing on a fresh line suggests the next available `comp_<n>=\``, `warp_<n>=\``, `per_frame_<n>=`, etc., auto-incremented from the highest existing index.
-- **HLSL shader syntax diagnostics** — the `warp_`/`comp_` blocks are reassembled and parsed with the [tree-sitter-hlsl](https://github.com/tree-sitter-grammars/tree-sitter-hlsl) grammar (compiled to WebAssembly), flagging structural errors like a missing `;` or `}`. Syntax only — undeclared MilkDrop uniforms/samplers are not errors. Toggle with the `milkdrop.shaderDiagnostics.enable` setting.
+### Highlighting
+
+- **Syntax highlighting** for sections, indexed keys (`per_frame_N=`, `per_pixel_N=`, `warp_N=`, `comp_N=`, `wave_<N>_*`, `shape_<N>_*`), HLSL inside shader backtick blocks, and numerics.
+- **Built-in highlighting** (semantic tokens) — engine-provided variables (`time`, `bass`, `q1..q32`, …), functions (`sin`, `if`, …), and recognised config keys (`fDecay`, `zoom`, `wavecode_0_samples`, …) are coloured distinctly, per execution pool. Because `.milk` auto-declares any bare name, a misspelled built-in silently reads as `0`; here it simply *loses* its colour and stands out. A scope fallback keeps it visible even in sparse themes that don't theme semantic tokens. Toggle: `milkdrop.semanticHighlighting.enable`.
+
+### Diagnostics (live as you type)
+
+- **Expression syntax** — per-frame/per-pixel/wave/shape code is parsed by a reimplementation of projectM's `projectm-eval` compiler, flagging unbalanced parens, stray tokens, unknown function calls, and wrong argument counts. Toggle: `milkdrop.expressionDiagnostics.enable`.
+- **Read but never written** — warns when a non-built-in variable is read but never assigned anywhere in its pool, so it can only evaluate to `0` — usually a typo, or a value wrongly expected to carry across pools (only `q1..q32` / `t1..t8` / `reg00..reg99` do). Toggle: `milkdrop.undefinedReadDiagnostics.enable`.
+- **HLSL shader syntax** — `warp_`/`comp_` blocks are reassembled and parsed with the [tree-sitter-hlsl](https://github.com/tree-sitter-grammars/tree-sitter-hlsl) grammar (compiled to WebAssembly), flagging structural errors like a missing `;` or `}`. Syntax only — undeclared MilkDrop uniforms/samplers are not errors. Toggle: `milkdrop.shaderDiagnostics.enable`.
+- **Duplicate key** — warns when two lines share the same `<prefix>_N=` key (projectM keeps the first; the later line is dropped at load time).
+- **Gap truncation** — warns when a block has a missing index: projectM stops at the first gap, so every higher-numbered line is silently dropped at load time. Comment-only lines past the gap aren't flagged (nothing is lost). Run the renumber command to close it.
+
+### Editing
+
+- **Renumber command** (`Milkdrop: Renumber Indexed Blocks`, default `cmd+alt+r` / `ctrl+alt+r`) — rewrites every indexed block so each prefix is numbered 1..N in source order, closing gaps and resolving the duplicate-overwrite bug.
+- **Smart line-start completions** — typing on a fresh line suggests the next available `per_frame_<n>=`, `warp_<n>=\``, `comp_<n>=\``, etc., auto-incremented from the highest existing index.
+
+### AI assistance
+
+- **Chat instructions** — ships a `.milk` editing guide (via `contributes.chatInstructions`) that VS Code chat attaches automatically when a `.milk` file is in context, so AI assistants follow the format's rules (index gaps, separate variable pools, the backtick shader convention, …).
 
 ## Development
 
