@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { initHlsl, isHlslReady, getShaderDiagnostics } from './hlsl';
+import { getExpressionDiagnostics } from './expr';
 
 // Two on-disk shapes for indexed code keys (see CLAUDE.md §4).
 //
@@ -179,6 +180,14 @@ function refreshDiagnostics(
 
     diags.push(...duplicateDiagnostics(doc, indexed));
     diags.push(...gapDiagnostics(doc, indexed));
+
+    // Syntax errors in the per-frame/per-pixel/wave/shape expression code.
+    const exprEnabled = vscode.workspace
+        .getConfiguration('milkdrop')
+        .get<boolean>('expressionDiagnostics.enable', true);
+    if (exprEnabled) {
+        diags.push(...getExpressionDiagnostics(doc, indexed));
+    }
 
     // HLSL syntax errors in the warp/comp shader blocks. No-op until the WASM
     // parser has finished loading; activate() re-runs diagnostics once it is.

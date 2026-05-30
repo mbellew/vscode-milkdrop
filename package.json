@@ -59,6 +59,11 @@
           "type": "boolean",
           "default": true,
           "description": "Report HLSL syntax errors (missing ';' / '}', stray tokens) in warp_ and comp_ shader blocks, using the tree-sitter-hlsl parser."
+        },
+        "milkdrop.expressionDiagnostics.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Report syntax errors in the per_frame/per_pixel/wave/shape expression code (unbalanced parens, stray tokens, unknown function calls, wrong argument counts), matching projectM's projectm-eval compiler."
         }
       }
     }
