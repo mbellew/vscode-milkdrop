@@ -99,13 +99,16 @@ export function poolForPrefix(prefix: string): PoolKind | null {
     if (p === 'per_pixel') {
         return 'per_pixel';
     }
-    if (/^wave_\d+_per_frame$/.test(p)) {
+    // A custom wave's init code shares the per-frame eval context (CustomWaveform.cpp),
+    // so `wave_<N>_init` and `wave_<N>_per_frame` are the same pool kind.
+    if (/^wave_\d+_init$/.test(p) || /^wave_\d+_per_frame$/.test(p)) {
         return 'wave_per_frame';
     }
     if (/^wave_\d+_per_point$/.test(p)) {
         return 'wave_per_point';
     }
-    if (/^shape_\d+_per_frame_init$/.test(p) || /^shape_\d+_per_frame$/.test(p)) {
+    // Likewise a custom shape's init shares its per-frame context (CustomShape.cpp).
+    if (/^shape_\d+_init$/.test(p) || /^shape_\d+_per_frame$/.test(p)) {
         return 'shape_per_frame';
     }
     return null;
@@ -115,4 +118,48 @@ export function poolForPrefix(prefix: string): PoolKind | null {
 // be lowercased by the caller (variable lookups are case-insensitive).
 export function isBuiltinVar(nameLower: string, pool: PoolKind): boolean {
     return BUILTINS[pool].has(nameLower) || REG_RE.test(nameLower);
+}
+
+// ── Scalar config keys ──────────────────────────────────────────────────────
+// The engine-recognized `key=value` config keys, transcribed from the literal
+// names projectM reads via GetFloat/GetInt/GetBool/GetString across the
+// MilkdropPreset/*.cpp components. Unlike the expression variables above, these
+// use the file's Hungarian spellings (fDecay, nWaveMode, bInvert) and include
+// the version headers. Keys are case-insensitive at load time (GetX lowercases),
+// so all names here are lowercase and callers must lowercase before testing.
+// An UNKNOWN config key is silently ignored by MilkDrop, so completeness matters:
+// a name not in this set should be treated as a likely typo.
+const SCALAR_CONFIG_KEYS: ReadonlySet<string> = new Set(words(`
+    milkdrop_preset_version psversion psversion_warp psversion_comp
+    fdecay fgammaadj fvideoechozoom fvideoechoalpha nvideoechoorientation
+    fshader fwarpanimspeed fwarpscale fzoomexponent
+    bbrighten bdarken bsolarize binvert bdarkencenter btexwrap bredbluestereo
+    zoom rot warp cx cy dx dy sx sy
+    nwavemode wave_r wave_g wave_b wave_x wave_y fwaveparam
+    fwavealpha fwavescale fwavesmoothing badditivewaves bwavedots bwavethick
+    bmaximizewavecolor bmodwavealphabyvolume fmodwavealphastart fmodwavealphaend
+    ob_size ob_r ob_g ob_b ob_a ib_size ib_r ib_g ib_b ib_a
+    bmotionvectorson nmotionvectorsx nmotionvectorsy mv_dx mv_dy mv_l mv_r mv_g mv_b mv_a
+    b1n b1x b1ed b2n b2x b3n b3x
+`));
+
+// Static config params for custom waves (wavecode_N_<param>) and custom shapes
+// (shapecode_N_<param>), from CustomWaveform.cpp / CustomShape.cpp.
+const WAVECODE_PARAMS: ReadonlySet<string> = new Set(words(`
+    enabled samples sep bspectrum busedots bdrawthick badditive scaling smoothing r g b a
+`));
+const SHAPECODE_PARAMS: ReadonlySet<string> = new Set(words(`
+    enabled sides additive thickoutline textured num_inst x y rad ang tex_ang tex_zoom
+    r g b a r2 g2 b2 a2 border_r border_g border_b border_a image
+`));
+
+// Is `nameLower` an engine-recognized scalar config key / wave / shape param?
+export function isScalarConfigKey(nameLower: string): boolean {
+    return SCALAR_CONFIG_KEYS.has(nameLower);
+}
+export function isWavecodeParam(nameLower: string): boolean {
+    return WAVECODE_PARAMS.has(nameLower);
+}
+export function isShapecodeParam(nameLower: string): boolean {
+    return SHAPECODE_PARAMS.has(nameLower);
 }

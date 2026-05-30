@@ -1,6 +1,12 @@
 import * as vscode from 'vscode';
 import { tokenize, reassembleGroup, IndexedCodeLine } from './expr';
-import { poolForPrefix, isBuiltinVar } from './identifiers';
+import {
+    poolForPrefix,
+    isBuiltinVar,
+    isScalarConfigKey,
+    isWavecodeParam,
+    isShapecodeParam,
+} from './identifiers';
 import { IndexedLine, scanIndexedLines } from './indexed';
 
 // Semantic highlighting for the expression-code blocks (per_frame, per_pixel,
@@ -23,6 +29,13 @@ export const SEMANTIC_LEGEND = new vscode.SemanticTokensLegend(TOKEN_TYPES, TOKE
 const VARIABLE = TOKEN_TYPES.indexOf('variable');
 const FUNCTION = TOKEN_TYPES.indexOf('function');
 const DEFAULT_LIBRARY = 1 << TOKEN_MODIFIERS.indexOf('defaultLibrary');
+
+// Second-pass config lines. The key (or the param after the wavecode_N_/
+// shapecode_N_ prefix) is the engine-recognized name we highlight — consistent
+// with how the same names are coloured when written in expression code.
+const WAVECODE_LINE_RE = /^(wavecode_\d+_)([A-Za-z_][A-Za-z0-9_]*)\s*=/i;
+const SHAPECODE_LINE_RE = /^(shapecode_\d+_)([A-Za-z_][A-Za-z0-9_]*)\s*=/i;
+const SCALAR_LINE_RE = /^([A-Za-z_][A-Za-z0-9_]*)\s*=/;
 
 interface Emit {
     line: number;
@@ -80,6 +93,33 @@ export class MilkdropSemanticTokensProvider implements vscode.DocumentSemanticTo
                     type,
                     modifiers,
                 });
+            }
+        }
+
+        // Second pass: scalar config keys and wavecode_/shapecode_ params. These
+        // aren't indexed expression code, so they're scanned line-by-line here.
+        // A known key is highlighted like a built-in variable; an unknown one is
+        // left plain (and, since MilkDrop silently ignores unknown keys, that
+        // plainness is itself a typo cue).
+        for (let lineNum = 0; lineNum < document.lineCount; lineNum++) {
+            const text = document.lineAt(lineNum).text;
+            const wave = WAVECODE_LINE_RE.exec(text);
+            if (wave) {
+                if (isWavecodeParam(wave[2].toLowerCase())) {
+                    emits.push({ line: lineNum, char: wave[1].length, length: wave[2].length, type: VARIABLE, modifiers: DEFAULT_LIBRARY });
+                }
+                continue;
+            }
+            const shape = SHAPECODE_LINE_RE.exec(text);
+            if (shape) {
+                if (isShapecodeParam(shape[2].toLowerCase())) {
+                    emits.push({ line: lineNum, char: shape[1].length, length: shape[2].length, type: VARIABLE, modifiers: DEFAULT_LIBRARY });
+                }
+                continue;
+            }
+            const scalar = SCALAR_LINE_RE.exec(text);
+            if (scalar && isScalarConfigKey(scalar[1].toLowerCase())) {
+                emits.push({ line: lineNum, char: 0, length: scalar[1].length, type: VARIABLE, modifiers: DEFAULT_LIBRARY });
             }
         }
 

@@ -76,10 +76,11 @@ PSVERSION_COMP=2
 <per_frame_N=…>                  ; runs every frame
 <per_pixel_N=…>                  ; runs per mesh vertex (legacy name)
 <wavecode_N_*=…>                 ; static config for custom waves
+<wave_N_initN=…>                 ; custom wave init code     (key is `init`, NOT `per_frame_init`)
 <wave_N_per_frameN=…>            ; custom wave per-frame code  (NO underscore before index)
 <wave_N_per_pointN=…>            ; custom wave per-point code
 <shapecode_N_*=…>                ; static config for custom shapes
-<shape_N_per_frame_initN=…>      ; custom shape init code
+<shape_N_initN=…>                ; custom shape init code    (key is `init`, NOT `per_frame_init`)
 <shape_N_per_frameN=…>           ; custom shape per-frame code
 <warp_N=`…>                      ; HLSL warp shader, one source line per key
 <comp_N=`…>                      ; HLSL composite shader, one source line per key
@@ -106,15 +107,18 @@ Regex: `^(per_frame_init|per_frame|per_pixel|warp|comp)_(\d+)=`
 ### Pattern B — NO underscore between suffix and index
 
 ```
+wave_0_init1=…
 wave_0_per_frame1=…
 wave_0_per_point1=…
+shape_0_init1=…
 shape_0_per_frame1=…
-shape_0_per_frame_init1=…
 ```
 
-Regex: `^(wave|shape)_(\d+)_(per_frame_init|per_frame|per_point)(\d+)=`
+Regex: `^(wave|shape)_(\d+)_(init|per_frame|per_point)(\d+)=`
 
-Why: the *outer* number is the wave/shape index (0–3); the *inner* number is the code line index. Whoever wrote the original format chose to elide the underscore on the inner one. The extension's current `INDEXED_LINE_RE` only covers Pattern A and silently ignores all custom-wave/shape code lines — they don't get renumbered, don't get duplicate diagnostics, don't get completions. Either add Pattern B explicitly or generalize.
+Why: the *outer* number is the wave/shape index (0–3); the *inner* number is the code line index. Whoever wrote the original format chose to elide the underscore on the inner one.
+
+**The init stage is keyed `init`, not `per_frame_init`.** projectM reassembles it with `GetCode("wave_<N>_init")` / `GetCode("shape_<N>_init")` (`PresetState.cpp:145,154`). The corpus confirms this: `wave_0_init…`/`shape_0_init…` appear in thousands of presets, while `*_per_frame_init` appears **zero** times. (An earlier version of this doc and of `PATTERN_B_RE` wrongly used `per_frame_init` here, so init blocks were never matched — no highlighting, diagnostics, or renumbering. Fixed.)
 
 There's also a third, simpler pattern for the static config of waves/shapes (no code, just scalars):
 
@@ -139,9 +143,10 @@ What the projectM source actually calls `GetCode()` on, with full prefix strings
 | Per-vertex | `per_pixel_` | `per_pixel_1=`, … (named `per_pixel` for historical reasons; it's per-vertex) |
 | Warp shader | `warp_` | `warp_1=\``, … (HLSL, one source line per key) |
 | Composite shader | `comp_` | `comp_1=\``, … |
+| Custom wave init | `wave_<N>_init` | `wave_0_init1=`, … |
 | Custom wave per-frame | `wave_<N>_per_frame` | `wave_0_per_frame1=`, … |
 | Custom wave per-point | `wave_<N>_per_point` | `wave_0_per_point1=`, … |
-| Custom shape init | `shape_<N>_per_frame_init` | `shape_0_per_frame_init1=`, … |
+| Custom shape init | `shape_<N>_init` | `shape_0_init1=`, … |
 | Custom shape per-frame | `shape_<N>_per_frame` | `shape_0_per_frame1=`, … |
 
 `<N>` is `0..3` (max four custom waves, four custom shapes). The inner index runs `1..` and **stops at the first gap**.
@@ -362,6 +367,7 @@ Up to four custom waveforms, `N` in `0..3`. Two flavors of keys:
 ### Code
 
 ```
+wave_N_init1=…         // runs once on preset load (shares the per-frame context); seeds t1..t8
 wave_N_per_frame1=…    // sets r/g/b/a/samples, reads q1..q32, t1..t8, time/audio
 wave_N_per_point1=…    // for each of `samples` points; reads sample, value1, value2
 ```
@@ -379,7 +385,7 @@ Up to four custom shapes, `N` in `0..3`. Polygons with 3–100 sides, optionally
 ### Code
 
 ```
-shape_N_per_frame_init1=…   // runs once on preset load
+shape_N_init1=…             // runs once on preset load (key is `init`, shares the per-frame context)
 shape_N_per_frame1=…        // runs per instance per frame; reads `instance`
 ```
 
@@ -484,11 +490,11 @@ Note the custom `sampler` declaration on `warp_1=` lives *above* `shader_body { 
 | [language-configuration.json](language-configuration.json) | Line comment `//`, bracket pairs. |
 | [syntaxes/milkdrop.tmLanguage.json](syntaxes/milkdrop.tmLanguage.json) | TextMate grammar. Covers `[section]`, `//` comments, `warp_N=\`…` / `comp_N=\`…` shader lines (begin HLSL embed), code lines, generic `key=value`, and an `expression-keyword` list. |
 | [src/extension.ts](src/extension.ts) | Activation code. Provides: renumber command, duplicate-key + gap diagnostics, line-start completion of next index, the semantic-tokens provider (`src/semantic.ts`), and (via `src/hlsl.ts` / `src/expr.ts` / `src/undefreads.ts`) shader, expression, and read-before-write diagnostics. |
-| [src/indexed.ts](src/indexed.ts) | Shared indexed-key scanner. `PATTERN_A_RE` (`per_frame_init`/`per_frame`/`per_pixel`/`warp`/`comp` + `_N=`) and `PATTERN_B_RE` (custom wave/shape `wave_<N>_per_point`-style, no inner underscore); `matchIndexedLine` / `scanIndexedLines` return `IndexedLine{lineNumber,prefix,separator,index,rest}`. Imported by extension/semantic/undefreads so the two regexes live in one place. |
-| [src/identifiers.ts](src/identifiers.ts) | The complete set of engine-registered built-in variable names per expression pool, transcribed verbatim from projectM's `*Context.cpp` `REG_VAR(...)` lists (PerFrame/PerPixel/WaveformPerFrame/WaveformPerPoint/ShapePerFrame), plus `q1..q32` (every pool), `t1..t8` (wave/shape pools), and `reg00..reg99` globals (matched by regex). `poolForPrefix()` maps a block prefix to its `PoolKind`; `isBuiltinVar(nameLower, pool)` tests membership (case-insensitive — projectm-eval uses `strcasecmp`). Pure (no `vscode` import) so it's unit-testable in plain Node. |
-| [src/semantic.ts](src/semantic.ts) | `DocumentSemanticTokensProvider`. Reassembles each non-shader block, tokenizes via `expr.tokenize`, and emits `variable.defaultLibrary` for built-in names + `function.defaultLibrary` for known functions; user-defined names emit nothing (fall through to default foreground). Net effect: a misspelled built-in loses its colour and stands out. Gated by `milkdrop.semanticHighlighting.enable`. |
-| [src/undefreads.ts](src/undefreads.ts) | "Read but never written" Warning diagnostic. For the two pools whose variable-sharing is confirmed from source — `per_frame_init`+`per_frame` (one shared eval context) and `per_pixel` (its own) — collects assigned names (a `name` token immediately followed by an assignment op) vs. read names across all blocks in the pool, and flags any read-only, non-built-in name (it can only evaluate to 0 → typo or a var wrongly expected to carry across pools; only `q`/`reg` carry). Custom wave/shape pools are deferred (their t-var carry rules need the same verification). Gated by `milkdrop.undefinedReadDiagnostics.enable`. |
-| [src/expr.ts](src/expr.ts) | Validates the per-frame/per-pixel/wave/shape **expression** code (the EEL-style ns-eel dialect — *not* the shaders). Hand-written tokenizer + precedence-climbing parser that mirrors projectm-eval's `Scanner.l`/`Compiler.y` (precedence ladder copied verbatim). Reassembles each non-shader indexed block via GetCode rules (gap-aware, first-wins), parses, emits one `Error` per block. Catches: structural syntax errors, a registered function used without `()`, an unknown name *called* as a function, and wrong argument count (the `FUNCTIONS` table + arities come from `TreeFunctions.c`; arity enforcement matches `CompilerFunctions.c:133`). Never flags unknown *variables* (any bare name is auto-declared). Validated against the real `projectm-eval` static lib over all 66,076 expression blocks in the corpus: **100% agreement, 0 false positives, 0 false negatives.** Gated by `milkdrop.expressionDiagnostics.enable`. |
+| [src/indexed.ts](src/indexed.ts) | Shared indexed-key scanner. `PATTERN_A_RE` (`per_frame_init`/`per_frame`/`per_pixel`/`warp`/`comp` + `_N=`) and `PATTERN_B_RE` (custom wave/shape `wave_<N>_(init\|per_frame\|per_point)`, `shape_<N>_(init\|per_frame)`, no inner underscore — note the init key is `init`, not `per_frame_init`); `matchIndexedLine` / `scanIndexedLines` return `IndexedLine{lineNumber,prefix,separator,index,rest}`. Imported by extension/semantic/undefreads so the two regexes live in one place. |
+| [src/identifiers.ts](src/identifiers.ts) | The complete set of engine-registered built-in variable names per expression pool, transcribed verbatim from projectM's `*Context.cpp` `REG_VAR(...)` lists (PerFrame/PerPixel/WaveformPerFrame/WaveformPerPoint/ShapePerFrame), plus `q1..q32` (every pool), `t1..t8` (wave/shape pools), and `reg00..reg99` globals (matched by regex). `poolForPrefix()` maps a block prefix to its `PoolKind`; `isBuiltinVar(nameLower, pool)` tests membership (case-insensitive — projectm-eval uses `strcasecmp`). Also holds the **scalar config keys** (73 Hungarian-named `key=value` keys read via `GetFloat/GetInt/GetBool/GetString`, incl. `PSVERSION*`/`MILKDROP_PRESET_VERSION`) and the `wavecode_N_*`/`shapecode_N_*` static params, with `isScalarConfigKey`/`isWavecodeParam`/`isShapecodeParam`. Pure (no `vscode` import) so it's unit-testable in plain Node. |
+| [src/semantic.ts](src/semantic.ts) | `DocumentSemanticTokensProvider`. Pass 1: reassembles each non-shader expression block, tokenizes via `expr.tokenize`, emits `variable.defaultLibrary` for built-in names + `function.defaultLibrary` for known functions. Pass 2 (line-based): scalar `key=value` config lines and `wavecode_N_<param>`/`shapecode_N_<param>` lines — emits `variable.defaultLibrary` on the key/param when it's engine-recognized. User-defined / unknown names emit nothing (fall through to default foreground), so a misspelled built-in or config key loses its colour and stands out (unknown config keys are silently ignored by MilkDrop, so this is a real typo cue). `package.json` `semanticTokenScopes` maps `variable.defaultLibrary`→`variable.language` and `function.defaultLibrary`→`keyword` as the TextMate fallback so colour shows even in sparse themes (e.g. Visual Studio Light) that don't theme the semantic tokens directly. Gated by `milkdrop.semanticHighlighting.enable`. |
+| [src/undefreads.ts](src/undefreads.ts) | "Read but never written" Warning diagnostic. Buckets blocks into eval-context pools (all confirmed from source): `per_frame_init`+`per_frame` (one context), `per_pixel` (its own), and per custom wave/shape — `wave_<N>_init`+`wave_<N>_per_frame` (one context), `wave_<N>_per_point` (separate; only q/t/`r`/`g`/`b`/`a` carry in from per-frame, per `CustomWaveform.cpp`), and `shape_<N>_init`+`shape_<N>_per_frame`. Collects assigned names (a `name` token immediately followed by an assignment op) vs. read names across all blocks in a pool, and flags any read-only, non-built-in name (it can only evaluate to 0 → typo or a var wrongly expected to carry across pools; only `q1..q32`, `t1..t8`, `reg00..reg99` carry). Corpus flag rate: ~27% per-frame/per-pixel, ~6.5% wave/shape. Gated by `milkdrop.undefinedReadDiagnostics.enable`. |
+| [src/expr.ts](src/expr.ts) | Validates the per-frame/per-pixel/wave/shape **expression** code (the EEL-style ns-eel dialect — *not* the shaders). Hand-written tokenizer + precedence-climbing parser that mirrors projectm-eval's `Scanner.l`/`Compiler.y` (precedence ladder copied verbatim). Reassembles each non-shader indexed block via GetCode rules (gap-aware, first-wins), parses, emits one `Error` per block. Catches: structural syntax errors, a registered function used without `()`, an unknown name *called* as a function, and wrong argument count (the `FUNCTIONS` table + arities come from `TreeFunctions.c`; arity enforcement matches `CompilerFunctions.c:133`). Never flags unknown *variables* (any bare name is auto-declared). Validated against the real `projectm-eval` static lib over all 66,076 expression blocks in the corpus: **100% agreement, 0 false positives, 0 false negatives.** (Caveat: that run predated the `PATTERN_B_RE` init-key fix, so wave/shape `init` blocks were not among the 66,076 — they are the same dialect, so risk is low, but re-validate to include them.) Gated by `milkdrop.expressionDiagnostics.enable`. |
 | [src/hlsl.ts](src/hlsl.ts) | HLSL syntax validation for `warp_`/`comp_` blocks. Loads `wasm/tree-sitter-hlsl.wasm` via `web-tree-sitter` (lazy, async, fails soft). Reassembles each block, normalizes the `shader_body`/`sampler_state` quirks, parses, emits one `Error` diagnostic per block at the first `ERROR`/`MISSING` node. Gated by `milkdrop.shaderDiagnostics.enable`. tree-sitter does syntax only — no name resolution, so undeclared MilkDrop uniforms/samplers are *not* flagged (by design; that's why the prelude isn't needed). |
 | [wasm/tree-sitter-hlsl.wasm](wasm/) | Prebuilt grammar, committed. Rebuild with `npm run build:wasm` (needs the `tree-sitter` CLI; downloads the WASI SDK on first run). |
 | [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) / [LICENSE](LICENSE) | MIT notices for tree-sitter / tree-sitter-hlsl; extension itself is MIT (© Matthew Bellew). |
@@ -499,7 +505,7 @@ Note the custom `sampler` declaration on `warp_1=` lives *above* `shader_body { 
 Resolved:
 
 1. ~~**Duplicate-key behavior**~~ — fixed. The diagnostic now reports first-wins ("projectM keeps the first occurrence; this line is dropped at load time"), via `duplicateDiagnostics` in [src/extension.ts](src/extension.ts).
-2. ~~**Pattern B prefixes missing**~~ — fixed. `PATTERN_B_RE` covers `wave_<N>_per_frame|per_point` and `shape_<N>_per_frame|per_frame_init`; both patterns are case-insensitive (keys are case-insensitive at load time, casing preserved on output).
+2. ~~**Pattern B prefixes missing**~~ — fixed. `PATTERN_B_RE` covers `wave_<N>_(init|per_frame|per_point)` and `shape_<N>_(init|per_frame)`; both patterns are case-insensitive (keys are case-insensitive at load time, casing preserved on output). The init stage is keyed `init`, **not** `per_frame_init` — an earlier `PATTERN_B_RE` used `per_frame_init` (zero corpus occurrences) and so never matched real init blocks; corrected against `PresetState.cpp:145,154` and the corpus.
 3. ~~**Gap-truncation diagnostic**~~ — done. `gapDiagnostics` flags every line past the first missing index ("dropped at load time… renumber to close the gap"), for all prefixes. The shader validator ([src/hlsl.ts](src/hlsl.ts)) skips a gap-truncated block so it doesn't emit a misleading whole-block parse error — the gap diagnostic owns that case.
 4. ~~**Trailing text after the body**~~ — done. `truncateAfterBody` in [src/hlsl.ts](src/hlsl.ts) blanks everything after the brace that closes `shader_body`, mirroring projectM's `MilkdropShader::PreprocessPresetShader` (which resizes the program there). Presets often leave notes ("written by martin", "END") after the final `}`; feeding that tail to tree-sitter caused a spurious whole-block error. Blanking (vs. slicing) preserves the row mapping. Cut corpus false positives from 44→23 blocks (0.5%→0.28% of shader presets). The remaining ~23 are grammar-coverage gaps — HLSL reserved words used as MilkDrop variable names (`sample`, `or`, …) and a few odd constructs (comma operator). **The prelude (`MilkdropStaticShaders`'s `kPresetShaderHeaderGlsl330`) does NOT help these**: tree-sitter does syntax only, so undeclared uniforms/samplers already aren't flagged — there's nothing to declare away, and prepending the header would only shift rows and risk new false positives.
 

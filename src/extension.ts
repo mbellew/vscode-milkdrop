@@ -79,6 +79,18 @@ function duplicateDiagnostics(doc: vscode.TextDocument, indexed: IndexedLine[]):
     return diags;
 }
 
+// True when an indexed line's value is empty or only a comment, so dropping it
+// at load time loses nothing real. Comments may use `//` or `\\` (or `/* … */`):
+// the expression/shader compiler strips them; the file parser keeps them.
+function isCommentOrBlankIndexedLine(l: IndexedLine): boolean {
+    const v = l.rest.startsWith('=') ? l.rest.slice(1) : l.rest;
+    const trimmed = v.trim();
+    return trimmed === ''
+        || trimmed.startsWith('//')
+        || trimmed.startsWith('\\\\')
+        || trimmed.startsWith('/*');
+}
+
 // Flag gap-truncated blocks. projectM's GetCode() loads `<prefix>_1`, `_2`, …
 // and STOPS at the first missing index, so any higher-indexed lines that exist
 // (often the tail orphaned by a duplicate) are silently dropped at load time.
@@ -107,6 +119,9 @@ function gapDiagnostics(doc: vscode.TextDocument, indexed: IndexedLine[]): vscod
         for (const l of lines) {
             if (l.index <= run) {
                 continue; // this line loads fine
+            }
+            if (isCommentOrBlankIndexedLine(l)) {
+                continue; // dropped at load time, but it's only a comment — nothing is lost
             }
             const label = `${l.prefix}${l.separator}${l.index}=`;
             const message = run === 0

@@ -1,42 +1,55 @@
 import * as vscode from 'vscode';
 import { tokenize, reassembleGroup, Token, IndexedCodeLine } from './expr';
-import { PoolKind, isBuiltinVar } from './identifiers';
+import { PoolKind, poolForPrefix, isBuiltinVar } from './identifiers';
 import { IndexedLine } from './indexed';
 
 // "Read but never written" diagnostic. Because the expression language
 // auto-declares every bare name, a variable that is *read* somewhere in a pool
 // but *assigned* nowhere in that pool can only ever evaluate to 0 — almost
 // always a typo (e.g. `bas` for `bass`) or a value the author wrongly expected
-// to carry across pools. (Only q1..q32 and reg00..reg99 actually carry; those
-// are built-ins and never flagged.)
+// to carry across pools. (Only q1..q32 and t1..t8 and reg00..reg99 actually
+// carry; those are built-ins and never flagged.)
 //
-// Scope (v1): the two pools whose variable-sharing is confirmed from the
-// projectM source — `per_frame_init`+`per_frame` (one shared eval context) and
-// `per_pixel` (its own context). Custom wave/shape pools are intentionally left
-// out for now; their cross-block carry rules (t-vars) need the same rigor.
+// Each pool is one projectM eval context (confirmed from source):
+//   - per_frame_init + per_frame share one context.
+//   - per_pixel is its own context.
+//   - each custom wave: init + per_frame share one context; per_point is separate.
+//   - each custom shape: init + per_frame share one context.
+// User variables do not cross between these contexts, so a name read in one but
+// assigned in none of that context's blocks is the bug we flag.
 
 // Operators whose left operand is being assigned (not compared). `==`/`<=`/etc.
 // are distinct two-char tokens, so they are correctly excluded.
 const ASSIGN_OPS = new Set(['=', '+=', '-=', '*=', '/=', '%=', '^=', '|=', '&=']);
 
-interface Pool {
-    kind: PoolKind;
-    label: string;                 // human name for the diagnostic message
-    prefixKeys: ReadonlySet<string>; // `${prefix}${separator}` lowercased
+// Identify the eval-context pool a block's prefix belongs to: a stable id that
+// merges context-sharing blocks (init with per_frame), its PoolKind for built-in
+// lookup, and a human label for the message. Returns null for shader/unknown.
+function classifyPool(prefix: string): { id: string; kind: PoolKind; label: string } | null {
+    const kind = poolForPrefix(prefix);
+    if (kind === null) {
+        return null;
+    }
+    const p = prefix.toLowerCase();
+    if (p === 'per_frame_init' || p === 'per_frame') {
+        return { id: 'per_frame', kind, label: 'per-frame' };
+    }
+    if (p === 'per_pixel') {
+        return { id: 'per_pixel', kind, label: 'per-pixel' };
+    }
+    const wave = p.match(/^wave_(\d+)_(init|per_frame|per_point)$/);
+    if (wave) {
+        const n = wave[1];
+        return wave[2] === 'per_point'
+            ? { id: `wave_${n}_per_point`, kind, label: `custom wave ${n} per-point` }
+            : { id: `wave_${n}_per_frame`, kind, label: `custom wave ${n} per-frame` };
+    }
+    const shape = p.match(/^shape_(\d+)_(init|per_frame)$/);
+    if (shape) {
+        return { id: `shape_${shape[1]}_per_frame`, kind, label: `custom shape ${shape[1]} per-frame` };
+    }
+    return null;
 }
-
-const POOLS: Pool[] = [
-    {
-        kind: 'per_frame',
-        label: 'per-frame',
-        prefixKeys: new Set(['per_frame_init_', 'per_frame_']),
-    },
-    {
-        kind: 'per_pixel',
-        label: 'per-pixel',
-        prefixKeys: new Set(['per_pixel_']),
-    },
-];
 
 interface ReadOccurrence {
     docLine: number;
@@ -82,8 +95,8 @@ export function getUndefinedReadDiagnostics(
     doc: vscode.TextDocument,
     indexed: ReadonlyArray<IndexedLine>
 ): vscode.Diagnostic[] {
-    // Bucket each block (grouped by prefix) under the pool that owns it.
-    const byPool = new Map<Pool, IndexedLine[][]>();
+    // Group indexed lines by prefix, then bucket each block under its eval-context
+    // pool (init merges with per_frame; each wave/shape index is independent).
     const groups = new Map<string, IndexedLine[]>();
     for (const l of indexed) {
         const key = `${l.prefix}${l.separator}`.toLowerCase();
@@ -94,34 +107,37 @@ export function getUndefinedReadDiagnostics(
             groups.set(key, [l]);
         }
     }
-    for (const [key, lines] of groups) {
-        const pool = POOLS.find((p) => p.prefixKeys.has(key));
+
+    interface Bucket { kind: PoolKind; label: string; blocks: IndexedLine[][]; }
+    const byPool = new Map<string, Bucket>();
+    for (const lines of groups.values()) {
+        const pool = classifyPool(lines[0].prefix);
         if (!pool) {
             continue;
         }
-        const blocks = byPool.get(pool);
-        if (blocks) {
-            blocks.push(lines);
+        const bucket = byPool.get(pool.id);
+        if (bucket) {
+            bucket.blocks.push(lines);
         } else {
-            byPool.set(pool, [lines]);
+            byPool.set(pool.id, { kind: pool.kind, label: pool.label, blocks: [lines] });
         }
     }
 
     const diags: vscode.Diagnostic[] = [];
-    for (const [pool, blocks] of byPool) {
+    for (const bucket of byPool.values()) {
         const written = new Set<string>();
         const firstRead = new Map<string, ReadOccurrence>();
-        for (const lines of blocks) {
+        for (const lines of bucket.blocks) {
             collectFromBlock(doc, lines, written, firstRead);
         }
         for (const [name, occ] of firstRead) {
-            if (written.has(name) || isBuiltinVar(name, pool.kind)) {
+            if (written.has(name) || isBuiltinVar(name, bucket.kind)) {
                 continue;
             }
             const range = new vscode.Range(occ.docLine, occ.startChar, occ.docLine, occ.endChar);
             const d = new vscode.Diagnostic(
                 range,
-                `'${doc.getText(range)}' is read in the ${pool.label} code but never assigned, so it evaluates to 0. Possible typo or a variable that doesn't carry across pools (only q1..q32 do).`,
+                `'${doc.getText(range)}' is read in the ${bucket.label} code but never assigned, so it evaluates to 0. Possible typo or a variable that doesn't carry across pools (only q1..q32 do).`,
                 vscode.DiagnosticSeverity.Warning
             );
             d.code = 'milkdrop.undefined-read';

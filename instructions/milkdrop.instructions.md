@@ -48,11 +48,13 @@ numbered keys that the loader reassembles by appending `1, 2, 3, …` to a prefi
   | Pattern | Shape | Examples |
   |---|---|---|
   | **A** — underscore before index | `<prefix>_<N>=` | `per_frame_1=`, `per_frame_init_1=`, `per_pixel_1=`, `warp_1=`, `comp_1=` |
-  | **B** — NO underscore before *inner* index | `<thing>_<outer>_<part><N>=` | `wave_0_per_frame1=`, `wave_0_per_point1=`, `shape_0_per_frame1=`, `shape_0_per_frame_init1=` |
+  | **B** — NO underscore before *inner* index | `<thing>_<outer>_<part><N>=` | `wave_0_init1=`, `wave_0_per_frame1=`, `wave_0_per_point1=`, `shape_0_init1=`, `shape_0_per_frame1=` |
 
   In pattern B the outer number (`0..3`) is the wave/shape index; the inner
-  number (no underscore) is the code-line index. `wavecode_0_*` / `shapecode_0_*`
-  are plain static config, **not** indexed code — leave them alone when renumbering.
+  number (no underscore) is the code-line index. The init stage is keyed **`init`**
+  — `wave_0_init1=`, `shape_0_init1=` — **not** `per_frame_init`. `wavecode_0_*` /
+  `shapecode_0_*` are plain static config, **not** indexed code — leave them alone
+  when renumbering.
 
 ### How to renumber a block
 
@@ -95,12 +97,19 @@ Any bare name in expression code auto-declares to `0`. So:
   The only carriers are:
   - **`q1`..`q32`** — set in `per_frame`, readable in `per_pixel`, custom
     wave/shape code, and shaders. Use these to pass per-frame values downstream.
-  - **`t1`..`t8`** — local to a single custom wave/shape's init→per-frame→per-point chain.
+  - **`t1`..`t8`** — carry within a single custom wave/shape's stages (init →
+    per-frame → per-point).
   - **`reg00`..`reg99`** and `gmegabuf` — global across everything.
-  - `per_frame_init` and `per_frame` **share** one pool (init sets up variables
-    for per-frame). `per_pixel`, and each custom wave/shape stage, are **separate** pools.
-  - So: do not expect a normal variable set in `per_frame` to be visible in
-    `per_pixel`. Pass it through a `q` variable instead.
+  - Which stages **share** a pool (one eval context) vs. are **separate**:
+    - `per_frame_init` + `per_frame` share one pool (init seeds the per-frame
+      variables); `per_pixel` is its own pool.
+    - Each custom wave: its `init` + `per_frame` share one pool; its `per_point`
+      is a **separate** pool — only `q`, `t`, and the wave's `r`/`g`/`b`/`a` carry
+      into per-point.
+    - Each custom shape: its `init` + `per_frame` share one pool.
+  - So: do not expect a normal variable set in `per_frame` to show up in
+    `per_pixel` (or set in a wave's `per_frame` to show up in its `per_point`).
+    Route it through a `q` variable (or, within one wave/shape, a `t` variable).
 
 ## Expression language (per-frame / per-pixel / wave / shape)
 

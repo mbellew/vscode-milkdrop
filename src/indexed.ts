@@ -10,10 +10,15 @@ import * as vscode from 'vscode';
 const PATTERN_A_RE = /^(per_frame_init|per_frame|per_pixel|warp|comp)_(\d+)(=.*)$/i;
 
 // Pattern B — custom wave/shape code, NO underscore between suffix and inner index:
-//   wave_0_per_frame1=, wave_0_per_point1=, shape_2_per_frame_init1=, ...
+//   wave_0_init1=, wave_0_per_frame1=, wave_0_per_point1=, shape_2_init1=, ...
 // The outer N (wave/shape index, typically 0..3) is part of the grouping prefix
 // so wave_0_per_point and wave_1_per_point renumber independently.
-const PATTERN_B_RE = /^((?:wave|shape)_\d+_(?:per_frame_init|per_frame|per_point))(\d+)(=.*)$/i;
+//
+// The init stage is keyed `<wave|shape>_<N>_init<M>` — NOT `per_frame_init`.
+// projectM reassembles it via GetCode("wave_<N>_init") / GetCode("shape_<N>_init")
+// (PresetState.cpp:145,154); the corpus confirms `wave_0_init…`/`shape_0_init…`
+// are the only forms used (zero occurrences of `*_per_frame_init`).
+const PATTERN_B_RE = /^((?:wave|shape)_\d+_(?:init|per_frame|per_point))(\d+)(=.*)$/i;
 
 export interface IndexedLine {
     lineNumber: number;

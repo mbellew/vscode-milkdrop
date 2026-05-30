@@ -2,7 +2,7 @@
   "name": "vscode-milkdrop",
   "displayName": "Milkdrop Preset Language Support",
   "description": "Syntax highlighting, renumbering, and diagnostics for .milk preset files.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "matthew-bellew",
   "license": "MIT",
   "repository": {
@@ -45,6 +45,15 @@
     "chatInstructions": [
       {
         "path": "./instructions/milkdrop.instructions.md"
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "milkdrop",
+        "scopes": {
+          "variable.defaultLibrary": ["variable.language"],
+          "function.defaultLibrary": ["keyword"]
+        }
       }
     ],
     "commands": [
